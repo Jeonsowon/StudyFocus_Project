@@ -1,0 +1,7 @@
+streamlit==1.45.1
+opencv-python==4.11.0.86
+mediapipe==0.10.9
+numpy==1.26.4
+pandas==2.2.3
+Pillow==11.2.1
+simpleaudio==1.0.4

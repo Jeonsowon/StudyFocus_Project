@@ -22,6 +22,8 @@ if "calibration_sum" not in st.session_state:
     st.session_state.calibration_sum = [0, 0]
 if "calibrated_center" not in st.session_state:
     st.session_state.calibrated_center = None
+if "last_score_update" not in st.session_state:
+    st.session_state.last_score_update = time.time()
 
 # Mediapipe 초기화
 mp_face_mesh = mp.solutions.face_mesh
@@ -70,7 +72,7 @@ stop = st.sidebar.button("🛑 세션 종료 및 저장", key="stop_button")
 
 cap = cv2.VideoCapture(0)
 focus_score = 0
-score_history = []
+status_text = "Detecting..."
 
 while cap.isOpened() and not stop:
     ret, frame = cap.read()
@@ -81,9 +83,9 @@ while cap.isOpened() and not stop:
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = face_mesh.process(rgb)
 
-    status_text = "Detecting..."
     head_moved = False
     eyes_closed = False
+    status_text = "Detecting..."
 
     if results.multi_face_landmarks:
         for face_landmarks in results.multi_face_landmarks:
@@ -95,7 +97,7 @@ while cap.isOpened() and not stop:
                 st.session_state.calibration_sum[0] += nx
                 st.session_state.calibration_sum[1] += ny
                 st.session_state.frame_count += 1
-                status_text = f"📐 기준점 설정 중... ({st.session_state.frame_count}/{CALIBRATION_FRAMES})"
+                status_text = f"기준점 설정 중 ({st.session_state.frame_count}/{CALIBRATION_FRAMES})"
                 if st.session_state.frame_count == CALIBRATION_FRAMES:
                     cx = st.session_state.calibration_sum[0] / CALIBRATION_FRAMES
                     cy = st.session_state.calibration_sum[1] / CALIBRATION_FRAMES
@@ -141,10 +143,16 @@ while cap.isOpened() and not stop:
         status_text = "😴 Eyes Closed"
     elif st.session_state.frame_count >= CALIBRATION_FRAMES:
         status_text = "✅ Focused"
-        focus_score += 1
+
+    # 1분마다 점수 1점 상승 (눈 감김 또는 고개 이탈 없을 때만)
+    now = time.time()
+    if now - st.session_state.last_score_update >= 60:
+        if not eyes_closed and not head_moved:
+            focus_score += 1
+        st.session_state.last_score_update = now
 
     st.session_state.score_log.append(focus_score)
-    elapsed = int(time.time() - st.session_state.start_time)
+    elapsed = int(now - st.session_state.start_time)
 
     FRAME_WINDOW.image(img, channels="BGR")
     st_focused.markdown(f"### 상태: **{status_text}**")
