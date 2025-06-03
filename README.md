@@ -27,6 +27,19 @@ Project Overview 🖥️
     : 주의 흐트러진 상태로 감지하면 울리는 경고음
   - requirements.txt   
     : 설치 필요 라이브러리 명세서
+
++ 동작 흐름
+1. 초기 60프레임 동안 코 위치 기준점 설정
+2. 이후 실시간으로 눈 감김 및 고개 이탈 여부 감지
+3. 눈 감김 또는 고개 이탈이 10초 이상 지속되면:  
+  - 경고음 재생  
+  - 로그 기록  
+4. 1분 단위로 집중 상태 유지 시 점수 증가
+5. 실시간 UI를 통해 상태 및 그래프 제공
+
++ UI 구성
+  - 좌측: 실시간 웹캠 영상
+  - 우측: 상태 텍스트, 점수 및 타이머, 실시간 그래프, 경고 로그 테이블
     
 + <main.py> 코드 설명
     ``` python
@@ -36,9 +49,7 @@ Project Overview 🖥️
     import numpy as np
     import time
     import pandas as pd
-    from PIL import Image
     import simpleaudio as sa
-    face_mesh = mp.solutions.face_mesh.FaceMesh(refine_landmarks=True)
     ```
     > pip install and import library 필요
 
@@ -221,15 +232,4 @@ Project Overview 🖥️
       st.download_button("📥 다운로드", data=log_df.to_csv(index=False), file_name="focus_warning_log.csv")
     ```
     > 경고 로그를 CSV 파일로 다운로드할 수 있어 사용자 기록 활용 가능.
-+ 동작 흐름
-1. 초기 60프레임 동안 코 위치 기준점 설정
-2. 이후 실시간으로 눈 감김 및 고개 이탈 여부 감지
-3. 눈 감김 또는 고개 이탈이 10초 이상 지속되면:  
-- 경고음 재생  
-- 로그 기록  
-4. 1분 단위로 집중 상태 유지 시 점수 증가
-5. 실시간 UI를 통해 상태 및 그래프 제공
 
-+ UI 구성
-- 좌측: 실시간 웹캠 영상
-- 우측: 상태 텍스트, 점수 및 타이머, 실시간 그래프, 경고 로그 테이블
