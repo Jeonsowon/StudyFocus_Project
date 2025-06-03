@@ -4,7 +4,6 @@ import mediapipe as mp
 import numpy as np
 import time
 import pandas as pd
-from PIL import Image
 import simpleaudio as sa
 
 st.set_page_config(page_title="강의 집중도 측정", layout="wide")
@@ -12,6 +11,8 @@ st.set_page_config(page_title="강의 집중도 측정", layout="wide")
 # 상태 저장
 if "score_log" not in st.session_state:
     st.session_state.score_log = []
+if "score_timestamps" not in st.session_state:
+    st.session_state.score_timestamps = []
 if "warning_log" not in st.session_state:
     st.session_state.warning_log = []
 if "start_time" not in st.session_state:
@@ -24,6 +25,8 @@ if "calibrated_center" not in st.session_state:
     st.session_state.calibrated_center = None
 if "last_score_update" not in st.session_state:
     st.session_state.last_score_update = time.time()
+if "status_log" not in st.session_state:
+    st.session_state.status_log = []
 
 # Mediapipe 초기화
 mp_face_mesh = mp.solutions.face_mesh
@@ -33,31 +36,17 @@ LEFT_EYE = [33, 160, 158, 133, 153, 144]
 RIGHT_EYE = [263, 387, 385, 362, 380, 373]
 CALIBRATION_FRAMES = 60
 EAR_THRESHOLD = 0.2
-EYE_CLOSE_DURATION = 3
-HEAD_MOVE_DURATION = 10
+WARNING_DURATION = 10
+STATUS_DURATION = 3
 HEAD_MOVE_THRESHOLD_X = 60
 HEAD_MOVE_THRESHOLD_Y = 40
 
 head_off_start = None
 eyes_closed_start = None
-head_moved = False
-eyes_closed = False
-head_moved_timer = 0
-eyes_closed_timer = 0
-
-
-def calculate_ear(landmarks, eye_indices, w, h):
-    p = [np.array([landmarks[i].x * w, landmarks[i].y * h]) for i in eye_indices]
-    ear = (np.linalg.norm(p[1] - p[5]) + np.linalg.norm(p[2] - p[4])) / (2.0 * np.linalg.norm(p[0] - p[3]))
-    return ear
-
-
-def play_alert():
-    try:
-        wave_obj = sa.WaveObject.from_wave_file("alarm.wav")
-        wave_obj.play()
-    except:
-        pass
+head_moved_warned = False
+eyes_closed_warned = False
+head_moved_status_start = None
+eyes_closed_status_start = None
 
 st.title("🎓 인터넷 강의 집중도 측정기")
 left_col, right_col = st.columns([1, 1])
@@ -74,6 +63,18 @@ cap = cv2.VideoCapture(0)
 focus_score = 0
 status_text = "Detecting..."
 
+def calculate_ear(landmarks, eye_indices, w, h):
+    p = [np.array([landmarks[i].x * w, landmarks[i].y * h]) for i in eye_indices]
+    ear = (np.linalg.norm(p[1] - p[5]) + np.linalg.norm(p[2] - p[4])) / (2.0 * np.linalg.norm(p[0] - p[3]))
+    return ear
+
+def play_alert():
+    try:
+        wave_obj = sa.WaveObject.from_wave_file("alarm.wav")
+        wave_obj.play()
+    except:
+        pass
+
 while cap.isOpened() and not stop:
     ret, frame = cap.read()
     if not ret:
@@ -83,9 +84,11 @@ while cap.isOpened() and not stop:
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = face_mesh.process(rgb)
 
+    now = time.time()
+    elapsed_time = now - st.session_state.start_time
     head_moved = False
     eyes_closed = False
-    status_text = "Detecting..."
+    current_status = "✅ Focused"
 
     if results.multi_face_landmarks:
         for face_landmarks in results.multi_face_landmarks:
@@ -97,73 +100,119 @@ while cap.isOpened() and not stop:
                 st.session_state.calibration_sum[0] += nx
                 st.session_state.calibration_sum[1] += ny
                 st.session_state.frame_count += 1
-                status_text = f"기준점 설정 중 ({st.session_state.frame_count}/{CALIBRATION_FRAMES})"
+                current_status = f"기준점 설정 중 ({st.session_state.frame_count}/{CALIBRATION_FRAMES})"
                 if st.session_state.frame_count == CALIBRATION_FRAMES:
                     cx = st.session_state.calibration_sum[0] / CALIBRATION_FRAMES
                     cy = st.session_state.calibration_sum[1] / CALIBRATION_FRAMES
                     st.session_state.calibrated_center = (cx, cy)
                 continue
 
-            # 기준점 기준 고개 이탈 감지
             if st.session_state.calibrated_center:
                 cx, cy = st.session_state.calibrated_center
                 dx = abs(cx - nx)
                 dy = abs(cy - ny)
                 if dx > HEAD_MOVE_THRESHOLD_X or dy > HEAD_MOVE_THRESHOLD_Y:
                     if not head_off_start:
-                        head_off_start = time.time()
-                    elif time.time() - head_off_start >= HEAD_MOVE_DURATION:
-                        head_moved = True
-                        if head_moved_timer == 0 or time.time() - head_moved_timer > 2:
-                            play_alert()
-                            st.session_state.warning_log.append((time.strftime("%H:%M:%S"), "고개 이탈 경고"))
-                            head_moved_timer = time.time()
+                        head_off_start = now
+                    if not head_moved_status_start:
+                        head_moved_status_start = now
+                    head_moved = True
+                    if now - head_off_start >= WARNING_DURATION and not head_moved_warned:
+                        play_alert()
+                        hms = time.strftime('%H:%M:%S', time.gmtime(elapsed_time))
+                        st.session_state.warning_log.append((hms, "고개 이탈 경고"))
+                        head_moved_warned = True
                 else:
                     head_off_start = None
+                    head_moved_warned = False
+                    head_moved_status_start = None
 
-            # 눈 감김 감지
             left_ear = calculate_ear(landmarks, LEFT_EYE, w, h)
             right_ear = calculate_ear(landmarks, RIGHT_EYE, w, h)
             avg_ear = (left_ear + right_ear) / 2.0
             if avg_ear < EAR_THRESHOLD:
                 if not eyes_closed_start:
-                    eyes_closed_start = time.time()
-                elif time.time() - eyes_closed_start >= EYE_CLOSE_DURATION:
-                    eyes_closed = True
-                    if eyes_closed_timer == 0 or time.time() - eyes_closed_timer > 2:
-                        play_alert()
-                        st.session_state.warning_log.append((time.strftime("%H:%M:%S"), "눈 감김 경고"))
-                        eyes_closed_timer = time.time()
+                    eyes_closed_start = now
+                if not eyes_closed_status_start:
+                    eyes_closed_status_start = now
+                eyes_closed = True
+                if now - eyes_closed_start >= WARNING_DURATION and not eyes_closed_warned:
+                    play_alert()
+                    hms = time.strftime('%H:%M:%S', time.gmtime(elapsed_time))
+                    st.session_state.warning_log.append((hms, "눈 감김 경고"))
+                    eyes_closed_warned = True
             else:
                 eyes_closed_start = None
+                eyes_closed_warned = False
+                eyes_closed_status_start = None
 
-    if head_moved:
-        status_text = "🧠 Head Moved"
-    elif eyes_closed:
-        status_text = "😴 Eyes Closed"
+    if eyes_closed_status_start and now - eyes_closed_status_start >= STATUS_DURATION:
+        current_status = "😴 Eyes Closed"
+    elif head_moved_status_start and now - head_moved_status_start >= STATUS_DURATION:
+        current_status = "🧠 Head Moved"
     elif st.session_state.frame_count >= CALIBRATION_FRAMES:
-        status_text = "✅ Focused"
+        current_status = "✅ Focused"
 
-    # 1분마다 점수 1점 상승 (눈 감김 또는 고개 이탈 없을 때만)
-    now = time.time()
+    st_focused.markdown(f"### 상태: **{current_status}**")
+    st.session_state.status_log.append((now, current_status))
+
     if now - st.session_state.last_score_update >= 60:
-        if not eyes_closed and not head_moved:
+        window_start = st.session_state.last_score_update
+        window_end = now
+        focused_time = 0.0
+        not_focused_time = 0.0
+        previous_time = None
+        previous_status = None
+
+        for t, s in st.session_state.status_log:
+            if t < window_start:
+                continue
+            if t > window_end:
+                break
+            if previous_time is not None:
+                duration = t - previous_time
+                if previous_status == "✅ Focused":
+                    focused_time += duration
+                else:
+                    not_focused_time += duration
+            previous_time = t
+            previous_status = s
+
+        if previous_time and previous_status:
+            duration = now - previous_time
+            if previous_status == "✅ Focused":
+                focused_time += duration
+            else:
+                not_focused_time += duration
+
+        if not_focused_time < 10:
             focus_score += 1
+
+        minutes_passed = int((now - st.session_state.start_time) // 60)
+        st.session_state.score_log.append(focus_score)
+        st.session_state.score_timestamps.append(f"{minutes_passed}분")
         st.session_state.last_score_update = now
 
-    st.session_state.score_log.append(focus_score)
-    elapsed = int(now - st.session_state.start_time)
-
     FRAME_WINDOW.image(img, channels="BGR")
-    st_focused.markdown(f"### 상태: **{status_text}**")
     st_timer.metric("누적 집중 점수", f"{focus_score}")
-    st_chart.line_chart(st.session_state.score_log[-100:])
+    if st.session_state.score_log:
+        score_df = pd.DataFrame({"시간 (분)": st.session_state.score_timestamps, "점수": st.session_state.score_log})
+        st_chart.line_chart(score_df.set_index("시간 (분)"))
     if st.session_state.warning_log:
-        st_log.table(pd.DataFrame(st.session_state.warning_log, columns=["시각", "경고 내용"]))
+        st_log.table(pd.DataFrame(st.session_state.warning_log, columns=["경과 시간", "경고 내용"]))
 
 cap.release()
-st.success("세션 종료! 로그를 저장하거나 분석을 시작하세요.")
 
-if st.button("💾 로그 저장하기", key="save_button"):
-    log_df = pd.DataFrame(st.session_state.warning_log, columns=["시각", "경고 내용"])
-    st.download_button("📥 다운로드", data=log_df.to_csv(index=False), file_name="focus_warning_log.csv")
+st.success("세션 종료! 아래에서 집중 점수 및 로그를 확인할 수 있습니다.")
+
+center_col = st.columns([1, 2, 1])[1]
+
+with center_col:
+    st.subheader("📈 집중 점수 추이")
+    if st.session_state.score_log:
+        score_df = pd.DataFrame({"시간 (분)": st.session_state.score_timestamps, "점수": st.session_state.score_log})
+        st.line_chart(score_df.set_index("시간 (분)"))
+
+    if st.session_state.warning_log:
+        st.subheader("⚠️ 경고 로그")
+        st.table(pd.DataFrame(st.session_state.warning_log, columns=["경과 시간", "경고 내용"]))
