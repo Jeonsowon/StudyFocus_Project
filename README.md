@@ -49,7 +49,7 @@
 
 - UI 구성
   - 좌측: 실시간 웹캠 영상
-  - 우측: 상태 텍스트, 점수 및 타이머, 실시간 그래프, 경고 로그 테이블
+  - 우측: 상태 텍스트, 집중 점수, 실시간 그래프, 경고 로그 테이블
 - <main.py> 코드 설명
 
   ```python
@@ -88,11 +88,12 @@
   ```
   # Mediapipe 초기화
   mp_face_mesh = mp.solutions.face_mesh
-  face_mesh = mp.solutions.face_mesh.FaceMesh(refine_landmarks=True)
+  face_mesh = mp_face_mesh.FaceMesh(refine_landmarks=True)
   LEFT_EYE = [33, 160, 158, 133, 153, 144]
   RIGHT_EYE = [263, 387, 385, 362, 380, 373]
   ```
 
+  > FaceMesh를 통해 얼굴의 3D 랜드마크를 감지 (눈, 코, 턱 등)
   > refine_landmarks=True는 눈과 입 등의 정밀한 위치까지 추적 가능
   > EAR 계산을 위해 필요한 눈 좌표 인덱스
 
@@ -104,7 +105,7 @@
   HEAD_MOVE_THRESHOLD_Y = 40
   ```
 
-  > 고개 이탈의 기준점 설정 시간으로 60프레임
+  > 고개 이탈의 기준점 설정으로 사용자의 코 위치를 60프레임동안 평균 내어 중심 좌표를 설정
   > 눈 감김과 고개 이탈 인식 기준 설정
   > 비집중 상태 10초 지속되면 경고음 기준 설정
 
@@ -113,8 +114,10 @@
   eyes_closed_start = None
   head_moved_warned = False
   eyes_closed_warned = False
+  head_moved_status_start = None
+  eyes_closed_status_start = None
 
-  st.title("🎓 인터넷 강의 집중도 측정기")
+  st.title("🎓 집중도 측정기")
   left_col, right_col = st.columns([1, 1])
 
   FRAME_WINDOW = left_col.image([])
@@ -123,7 +126,7 @@
   st_chart = right_col.empty()
   st_log = right_col.empty()
 
-  stop = st.sidebar.button("🛑 세션 종료 및 저장", key="stop_button")
+  stop = st.sidebar.button("🛑 세션 종료", key="stop_button")
 
   cap = cv2.VideoCapture(0)
   focus_score = 0
@@ -135,13 +138,13 @@
 
   ```
   def calculate_ear(landmarks, eye_indices, w, h):
-  p = [np.array([landmarks[i].x * w, landmarks[i].y * h]) for i in eye_indices]
-  ear = (np.linalg.norm(p[1] - p[5]) + np.linalg.norm(p[2] - p[4])) / (2.0 * np.linalg.norm(p[0] - p[3]))
-  return ear
+    p = [np.array([landmarks[i].x * w, landmarks[i].y * h]) for i in eye_indices]
+    ear = (np.linalg.norm(p[1] - p[5]) + np.linalg.norm(p[2] - p[4])) / (2.0 * np.linalg.norm(p[0] - p[3]))
+    return ear
   ```
 
   > EAR (Eye Aspect Ratio): 눈의 세로 길이 대비 가로 길이를 비율로 나타낸 값을 계산하는 함수
-  > 값이 낮을수록 눈을 감은 상태로 간주
+  > 눈의 landmark 좌표로 EAR 계산, 값이 낮을수록 눈 감음으로 인식
 
   ```
   def play_alert():
@@ -162,39 +165,42 @@
 
   ```
   if st.session_state.calibrated_center is None and st.session_state.frame_count < CALIBRATION_FRAMES:
-  st.session_state.calibration_sum[0] += nx
-  st.session_state.calibration_sum[1] += ny
-  st.session_state.frame_count += 1
-  current_status = f"기준점 설정 중 ({st.session_state.frame_count}/{CALIBRATION_FRAMES})"
-  if st.session_state.frame_count == CALIBRATION_FRAMES:
-      cx = st.session_state.calibration_sum[0] / CALIBRATION_FRAMES
-      cy = st.session_state.calibration_sum[1] / CALIBRATION_FRAMES
-      st.session_state.calibrated_center = (cx, cy)
-  continue
+    st.session_state.calibration_sum[0] += nx
+    st.session_state.calibration_sum[1] += ny
+    st.session_state.frame_count += 1
+    current_status = f"기준점 설정 중 ({st.session_state.frame_count}/{CALIBRATION_FRAMES})"
+    if st.session_state.frame_count == CALIBRATION_FRAMES:
+        cx = st.session_state.calibration_sum[0] / CALIBRATION_FRAMES
+        cy = st.session_state.calibration_sum[1] / CALIBRATION_FRAMES
+        st.session_state.calibrated_center = (cx, cy)
+    continue
   ```
 
   > 초기 60프레임 동안 코의 위치 평균을 계산하여 기준점으로 설정
 
   ```
   if st.session_state.calibrated_center:
-  cx, cy = st.session_state.calibrated_center
-  dx = abs(cx - nx)
-  dy = abs(cy - ny)
-  if dx > HEAD_MOVE_THRESHOLD_X or dy > HEAD_MOVE_THRESHOLD_Y:
+    cx, cy = st.session_state.calibrated_center
+    dx = abs(cx - nx)
+    dy = abs(cy - ny)
+    if dx > HEAD_MOVE_THRESHOLD_X or dy > HEAD_MOVE_THRESHOLD_Y:
       if not head_off_start:
           head_off_start = now
-      elif now - head_off_start >= WARNING_DURATION:
-          head_moved = True
-          if not head_moved_warned:
-              play_alert()
-              st.session_state.warning_log.append((time.strftime("%H:%M:%S"), "고개 이탈 경고"))
-              head_moved_warned = True
-  else:
-      head_off_start = None
-      head_moved_warned = False
+      if not head_moved_status_start:
+          head_moved_status_start = now
+      head_moved = True
+      if now - head_off_start >= WARNING_DURATION and not head_moved_warned:
+          play_alert()
+          hms = time.strftime('%H:%M:%S', time.gmtime(elapsed_time))
+          st.session_state.warning_log.append((hms, "고개 이탈 경고"))
+          head_moved_warned = True
+    else:
+        head_off_start = None
+        head_moved_warned = False
+        head_moved_status_start = None
   ```
 
-  > 기준점 대비 X 또는 Y 방향으로 기준치 이상 벗어나고, 10초 이상 지속되면 고개 이탈 감지 및 경고음 발생.
+  > 현재 코 위치와 기준점 차이(dx, dy)가 임계값 이상이면 고개 이탈로 판단 10초 이상 지속되면 고개 이탈 경고음 발생
 
   ```
   left_ear = calculate_ear(landmarks, LEFT_EYE, w, h)
@@ -203,57 +209,91 @@
   if avg_ear < EAR_THRESHOLD:
       if not eyes_closed_start:
           eyes_closed_start = now
-      elif now - eyes_closed_start >= WARNING_DURATION:
-          eyes_closed = True
-          if not eyes_closed_warned:
-              play_alert()
-              st.session_state.warning_log.append((time.strftime("%H:%M:%S"), "눈 감김 경고"))
-              eyes_closed_warned = True
+      if not eyes_closed_status_start:
+          eyes_closed_status_start = now
+      eyes_closed = True
+      if now - eyes_closed_start >= WARNING_DURATION and not eyes_closed_warned:
+          play_alert()
+          hms = time.strftime('%H:%M:%S', time.gmtime(elapsed_time))
+          st.session_state.warning_log.append((hms, "눈 감김 경고"))
+          eyes_closed_warned = True
   else:
       eyes_closed_start = None
       eyes_closed_warned = False
+      eyes_closed_status_start = None
   ```
 
-  > EAR 계산으로 눈 감김 여부를 판단하여 10초 이상 지속되면 눈 감김 감지 및 경고음 발생
+  > EAR < 0.2 이고 10초 이상 지속되면 눈 감김 감지 및 경고음 발생
+
 
   ```
-  if eyes_closed:
+  if eyes_closed_status_start and now - eyes_closed_status_start >= STATUS_DURATION:
       current_status = "😴 Eyes Closed"
-  elif head_moved:
+  elif head_moved_status_start and now - head_moved_status_start >= STATUS_DURATION:
       current_status = "🧠 Head Moved"
-  else :
+  elif st.session_state.frame_count >= CALIBRATION_FRAMES:
       current_status = "✅ Focused"
 
   st_focused.markdown(f"### 상태: **{current_status}**")
+  st.session_state.status_log.append((now, current_status))
   ```
 
   > 현재 상태를 실시간으로 텍스트로 반영하여 사용자에게 시각 피드백 제공
 
   ```
   if now - st.session_state.last_score_update >= 60:
-  if not head_moved and not eyes_closed:
-      focus_score += 1
-  st.session_state.last_score_update = now
-  st.session_state.score_log.append(focus_score)
+      window_start = st.session_state.last_score_update
+      window_end = now
+
+      def parse_hms_to_elapsed_seconds(hms_str):
+          h, m, s = map(int, hms_str.split(":"))
+          return h * 3600 + m * 60 + s
+
+      warning_in_window = any(
+          window_start <= st.session_state.start_time + parse_hms_to_elapsed_seconds(log[0]) <= window_end
+          for log in st.session_state.warning_log
+      )
+
+      if not warning_in_window:
+          focus_score += 1
+
+      minutes_passed = int((now - st.session_state.start_time) // 60)
+      st.session_state.score_log.append(focus_score)
+      st.session_state.score_timestamps.append(f"{minutes_passed}분")
+      st.session_state.last_score_update = now
   ```
 
-  > 1분 단위로 집중이 유지될 경우 점수 1점 추가
-  > 비집중 감지되면 점수 상승 없음.
+  > 매 1분마다 이전 1분 동안의 상태 로그를 분석하여 집중 점수 증가 여부 결정
+  > 만약 경고가 하나도 없으면 점수 1점 증가
 
   ```
   FRAME_WINDOW.image(img, channels="BGR")
   st_timer.metric("누적 집중 점수", f"{focus_score}")
-  st_chart.line_chart(st.session_state.score_log[-100:])
+  if st.session_state.score_log:
+      score_df = pd.DataFrame({"시간 (분)": st.session_state.score_timestamps, "점수": st.session_state.score_log})
+      st_chart.line_chart(score_df.set_index("시간 (분)"))
   if st.session_state.warning_log:
-      st_log.table(pd.DataFrame(st.session_state.warning_log, columns=["시각", "경고 내용"]))
+      st_log.table(pd.DataFrame(st.session_state.warning_log, columns=["경과 시간", "경고 내용"]))
   ```
 
-  > 카메라 영상, 상태 텍스트, 점수, 그래프, 로그 테이블 모두 실시간 갱신
+  > 점수는 숫자 및 라인 차트로 시각화, 경고는 표 형태로 표시
 
   ```
-  if st.button("💾 로그 저장하기", key="save_button"):
-    log_df = pd.DataFrame(st.session_state.warning_log, columns=["시각", "경고 내용"])
-    st.download_button("📥 다운로드", data=log_df.to_csv(index=False), file_name="focus_warning_log.csv")
+  cap.release()
+  
+  st.success("세션 종료! 집중 점수 그래프 및 로그를 확인할 수 있습니다.")
+  
+  center_col = st.columns([1, 2, 1])[1]
+  
+  with center_col:
+      st.subheader("📈 집중 점수 추이")
+      if st.session_state.score_log:
+          score_df = pd.DataFrame({"시간 (분)": st.session_state.score_timestamps, "점수": st.session_state.score_log})
+          st.line_chart(score_df.set_index("시간 (분)"))
+  
+      if st.session_state.warning_log:
+          st.subheader("⚠️ 경고 로그")
+          st.table(pd.DataFrame(st.session_state.warning_log, columns=["경과 시간", "경고 내용"]))
   ```
 
-  > 경고 로그를 CSV 파일로 다운로드할 수 있어 사용자 기록 활용 가능.
+  >  세션 종료 후 집중 점수 그래프와 경고 로그 결과 다시 출력하여 복습 필요 부분 확인
