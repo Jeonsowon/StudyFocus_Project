@@ -48,7 +48,7 @@ eyes_closed_warned = False
 head_moved_status_start = None
 eyes_closed_status_start = None
 
-st.title("🎓 인터넷 강의 집중도 측정기")
+st.title("🎓 집중도 측정기")
 left_col, right_col = st.columns([1, 1])
 
 FRAME_WINDOW = left_col.image([])
@@ -57,7 +57,7 @@ st_timer = right_col.empty()
 st_chart = right_col.empty()
 st_log = right_col.empty()
 
-stop = st.sidebar.button("🛑 세션 종료 및 저장", key="stop_button")
+stop = st.sidebar.button("🛑 세션 종료", key="stop_button")
 
 cap = cv2.VideoCapture(0)
 focus_score = 0
@@ -159,33 +159,17 @@ while cap.isOpened() and not stop:
     if now - st.session_state.last_score_update >= 60:
         window_start = st.session_state.last_score_update
         window_end = now
-        focused_time = 0.0
-        not_focused_time = 0.0
-        previous_time = None
-        previous_status = None
 
-        for t, s in st.session_state.status_log:
-            if t < window_start:
-                continue
-            if t > window_end:
-                break
-            if previous_time is not None:
-                duration = t - previous_time
-                if previous_status == "✅ Focused":
-                    focused_time += duration
-                else:
-                    not_focused_time += duration
-            previous_time = t
-            previous_status = s
+        def parse_hms_to_elapsed_seconds(hms_str):
+            h, m, s = map(int, hms_str.split(":"))
+            return h * 3600 + m * 60 + s
 
-        if previous_time and previous_status:
-            duration = now - previous_time
-            if previous_status == "✅ Focused":
-                focused_time += duration
-            else:
-                not_focused_time += duration
+        warning_in_window = any(
+            window_start <= st.session_state.start_time + parse_hms_to_elapsed_seconds(log[0]) <= window_end
+            for log in st.session_state.warning_log
+        )
 
-        if not_focused_time < 10:
+        if not warning_in_window:
             focus_score += 1
 
         minutes_passed = int((now - st.session_state.start_time) // 60)
@@ -203,7 +187,7 @@ while cap.isOpened() and not stop:
 
 cap.release()
 
-st.success("세션 종료! 아래에서 집중 점수 및 로그를 확인할 수 있습니다.")
+st.success("세션 종료! 집중 점수 그래프 및 로그를 확인할 수 있습니다.")
 
 center_col = st.columns([1, 2, 1])[1]
 
