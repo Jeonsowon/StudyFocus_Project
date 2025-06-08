@@ -298,7 +298,20 @@
 
   >  세션 종료 후 집중 점수 그래프와 경고 로그 결과 다시 출력하여 복습 필요 부분 확인
 
-
++ Program 실행 모습
+  - Face Landmarks Test.mp4 영상으로 MediaPipe 얼굴 랜드마크 시각화 test 확인 가능 ([📷 Face Landmarks Test.mp4](https://github.com/Jeonsowon/StudyFocus_Project/blob/main/Face%20Landmarks%20Test.mp4))
+  - 집중도 측정 Demo.mp4 영상으로 집중도 측정 프로그램 실행 과정 확인 가능([📷 집중도 측정 Demo.mp4](https://github.com/Jeonsowon/StudyFocus_Project/blob/main/%EC%A7%91%EC%A4%91%EB%8F%84%20%EC%B8%A1%EC%A0%95%20Demo.mp4))
+    - 영상 흐름
+      - 60프레임동안 calibration 실행하여 코 위치 기준점 설정
+      - 0분~1분동안 Focused 상태로 경고 없어 집중 점수 1점 상승
+      - 1분~2분동안 눈 감김 경고와 고개 이탈 경고로 점수 상승 없음
+      - 2분~3분동안 눈 감김 경고로 점수 상승 없음
+      - 3분~4분동안 눈 감김 또는 고개 이탈 상태로 감지는 되었으나 10초 이상 유지되지 않아 경고 처리 되지 않았으며 집중 점수 1점 상승
+      - 세션 종료 버튼으로 측정 종료되며, 집중 점수 추이 그래프와 경고 로그를 보여줌
+  - 집중도 측정 Test.png : 집중도 측정 프로그램 실행 중 모습
+    ![image](https://github.com/Jeonsowon/StudyFocus_Project/blob/main/%EC%A7%91%EC%A4%91%EB%8F%84%20%EC%B8%A1%EC%A0%95%20Test.png)
+  - 집중도 측정 결과 Test.png 집중도 측정 세션 종료 후 모습
+![image](https://github.com/Jeonsowon/StudyFocus_Project/blob/main/%EC%A7%91%EC%A4%91%EB%8F%84%20%EC%B8%A1%EC%A0%95%20%EA%B2%B0%EA%B3%BC%20Test.png)
 
 ### Developer 🙋
   21102318 전소원
